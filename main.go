@@ -4,8 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -14,16 +16,21 @@ var (
 	port string
 )
 
+const IP_URL = "https://api.ipify.org?format=text"
+
 func init() {
-	flag.StringVar(&port, "port", "8379", "Port To Use")
+	flag.StringVar(&port, "port", "8992", "Port To Use")
 }
 
 func main() {
 
-	local := getOutboundIP()
-	addr := fmt.Sprintf(local.String() + ":" + port)
+	local := getPubIP()
 
-	fmt.Println("localIP: ", addr)
+	fmt.Println(local)
+
+	addr := fmt.Sprintf(local + ":" + port)
+
+	fmt.Println("Connect To : ", addr)
 	conn, err := net.Dial("tcp", addr)
 	wg := sync.WaitGroup{}
 
@@ -32,7 +39,7 @@ func main() {
 		wg.Add(1)
 		go HostServer(&wg)
 		wg.Wait()
-		conn, err = net.Dial("tcp", ":8379")
+		conn, err = net.Dial("tcp", ":8992")
 		if err != nil {
 			fmt.Println("Cannot Connect To Server!!!")
 		}
@@ -121,14 +128,18 @@ func proxy(conn net.Conn) error {
 	return nil
 }
 
-func getOutboundIP() net.IP {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+func getPubIP() string {
+	fmt.Printf("Getting IP address from  ipify ...\n")
+	resp, err := http.Get(IP_URL)
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
-	defer conn.Close()
-
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-
-	return localAddr.IP
+	defer resp.Body.Close()
+	ip, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	ip = []byte(string(ip))
+	fmt.Printf("My IP is: %s\n", ip)
+	return string(ip)
 }
