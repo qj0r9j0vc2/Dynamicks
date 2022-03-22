@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"io"
@@ -8,6 +9,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -24,18 +27,15 @@ func init() {
 
 func main() {
 
-	local := getPubIP()
-
-	fmt.Println(local)
-
+	local := getOutboundIP()
 	addr := fmt.Sprintf(local + ":" + port)
 
-	fmt.Println("Connect To : ", addr)
-	conn, err := net.Dial("tcp", addr)
+	fmt.Printf("Connect To : %s\n\n", addr)
+	conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
 	wg := sync.WaitGroup{}
 
 	if err != nil {
-		fmt.Println("There's no Hosting Server!")
+		fmt.Println("There's no Hosting Server!\n\n\n")
 		wg.Add(1)
 		go HostServer(&wg)
 		wg.Wait()
@@ -46,11 +46,17 @@ func main() {
 	}
 
 	wg.Add(1)
-	go RunClient(conn)
+	go RunClient(conn, &wg)
 	wg.Wait()
 }
 
-func RunClient(conn net.Conn) {
+func RunClient(conn net.Conn, wg *sync.WaitGroup) {
+
+	clientPrintln("Local address: ", conn.LocalAddr())
+
+	var name string
+	fmt.Println("Enter your Name: ")
+	fmt.Scanln(&name)
 
 	go func(c net.Conn) {
 		recv := make([]byte, 4096)
@@ -58,30 +64,47 @@ func RunClient(conn net.Conn) {
 		for {
 			n, err := c.Read(recv)
 			if err != nil {
-				fmt.Println("Failed to Read data : ", err)
+				if err == io.EOF {
+					serverPrintln("Hosting Server DOWN...!")
+					return
+				}
+				serverPrintln("Failed to Read data : ", err.Error())
 				break
 			}
-			fmt.Println("[Received]: ", string(recv[:n]))
+			resp := string(recv[:n])
+			log.Println(strings.Replace(resp, "["+name+"]", "[ME]", 1))
 		}
 	}(conn)
 
-	//메시지 전송 함수 작성해야함.
+	in := bufio.NewReader(os.Stdin)
 	for {
-		fmt.Printf("[SEND]: ")
-		var msg string
-		fmt.Scan(&msg)
+		msg := newLineScanln(name, in)
 		_, err := conn.Write([]byte(msg))
 		time.Sleep(1 * time.Millisecond)
+
 		if err != nil {
-			fmt.Println(err.Error())
+			connectPrintln(err.Error())
+			wg.Done()
+			return
 		}
+
 	}
 
 }
 
+func newLineScanln(name string, in *bufio.Reader) string {
+	line, err := in.ReadString('\n')
+	line = strings.Trim(line, "\n")
+
+	if err != nil {
+		fmt.Println("[ERROR] invalid input data")
+	}
+	return "[" + name + "]: " + line
+}
+
 func HostServer(wg *sync.WaitGroup) {
 	listen, err := net.Listen("tcp", ":"+port)
-	fmt.Println("Starting Server on:", port)
+	fmt.Printf("Starting Server on: %s\n\n", port)
 
 	if err != nil {
 		log.Fatalln(err)
@@ -89,43 +112,80 @@ func HostServer(wg *sync.WaitGroup) {
 	defer listen.Close()
 
 	wg.Done()
+	connList := make([]net.Conn, 0, 100)
 
+	var connCount = 0
 	for {
 		conn, err := listen.Accept()
+		connList = append(connList, conn)
+
 		defer conn.Close()
 		if err != nil {
-			fmt.Println("Cannot connect with Client: ", err.Error())
+			connectPrintln("Cannot connect with Client: ", err.Error())
 			continue
 		}
-		for {
-			err = proxy(conn)
-			if err != nil {
-				break
+		serverPrintln("New Client Connected!  CLIENT counts: ", connCount+1, "ClientIP: ", conn.RemoteAddr())
+
+		go func() {
+			var cnnIdx = connCount
+			for {
+				err = proxy(conn, &connList)
+				if err != nil {
+					break
+				}
 			}
-		}
+
+			rmIndexSlice(connList, cnnIdx, connCount)
+			connCount--
+			serverPrintln("Disconnected...! CLIENT counts: ", connCount)
+		}()
+		connCount++
 	}
 }
 
-func proxy(conn net.Conn) error {
+func rmIndexSlice(slice []net.Conn, idx int, cnnCnt int) []net.Conn {
+	if idx == cnnCnt {
+		return slice[:idx]
+	}
+	return append(slice[:idx], slice[idx+1:]...)
+}
+
+func proxy(from net.Conn, toList *[]net.Conn) error {
 	received := make([]byte, 4096)
-	n, err := conn.Read(received)
+	n, err := from.Read(received)
 	if err != nil {
 		if err == io.EOF {
-			fmt.Println("Network Connection Failed...")
+			serverPrintln("Network Connection Failed... ClientIP: ", from.RemoteAddr())
+			return err
 		} else {
-			fmt.Println("Error Occurred while Receiving Data")
+			connectPrintln("Error Occurred while Receiving Data")
 			return err
 		}
 	}
+
 	if n > 0 {
-		_, err := conn.Write(received[:n])
-		if err != nil {
-			fmt.Println("Cannot Write Data...! ", err.Error())
-			return err
+		for _, to := range *toList {
+			//connectLogging("pipeline: ", to.LocalAddr(), " -> ", to.RemoteAddr())
+			_, err := to.Write(received[:n])
+
+			if err != nil {
+				fmt.Println("Cannot Write Data...! ", err.Error())
+				return err
+			}
 		}
 	}
 
 	return nil
+}
+
+func getOutboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
 }
 
 func getPubIP() string {
@@ -142,4 +202,20 @@ func getPubIP() string {
 	ip = []byte(string(ip))
 	fmt.Printf("My IP is: %s\n", ip)
 	return string(ip)
+}
+
+func serverPrintln(a ...interface{}) {
+	log.Println("[SERVER] ", a)
+}
+
+func connectPrintln(a ...interface{}) {
+	log.Println("[CONNECT] ", a)
+}
+
+func receivedPrintln(a ...interface{}) {
+	log.Println("[RECEIVED]: ", a)
+}
+
+func clientPrintln(a ...interface{}) {
+	log.Println("[CLIENT] ", a)
 }
