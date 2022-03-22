@@ -1,6 +1,6 @@
 # Dynamicsk
 
-<<<<<<< Updated upstream
+
 ## 구성
 ### [1. 기획 배경](#기획-배경)
 ### [2. Flowchart](#플로우차트)
@@ -16,5 +16,5 @@
 
 ## **구현**
 =======
->>>>>>> Stashed changes
+
 
