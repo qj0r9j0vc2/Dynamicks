@@ -1,4 +1,4 @@
-# Dynamicsk
+# Dynamicks
 
 ## **기획 배경**
 
