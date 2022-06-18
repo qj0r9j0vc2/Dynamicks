@@ -5,7 +5,7 @@
 
 ## **작동**
 
-![작동](https://github.com/qj0r9j0vc2/Dynamicsk/blob/main/Dynamicsk-FlowChart.png)
+![작동](https://github.com/qj0r9j0vc2/Dynamicks/blob/main/Dynamicsk.png)
 
 ## **구현**
 
